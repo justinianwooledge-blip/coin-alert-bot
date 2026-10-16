@@ -12,7 +12,7 @@ try:
 except Exception:
     STATE = {}
 
-VERSION = 3
+VERSION = 4
 LINE = "━━━━━━━━━━━━━━"
 e = html.escape
 TP = CFG.get("take_profit_pct", 50)
@@ -89,7 +89,7 @@ def coin_block(r):
     if r.get("missing"):
         return f"❌ <b>{e(r['name'])}</b>  couldn't load (check the CA)"
     dot = "🟢" if r["h24"] > 0.5 else "🔴" if r["h24"] < -0.5 else "⚪"
-    up, down = r["up"], r["down"]
+    up, down = r["pl_pct"] if r["pl_pct"] is not None else r["up"], r["down"]
     sig = ("💰 Take-profit zone" if up >= TP else "🛒 Rebuy zone" if down <= -DIP
            else "👀 Getting close to take-profit" if up >= TP * 0.7
            else "👀 Getting close to rebuy" if down <= -DIP * 0.7 else "✋ Hold")
@@ -99,7 +99,10 @@ def coin_block(r):
     return (f"{dot} <b>{e(r['name'])}</b>   {fmt(r['price'])}\n"
             f"▸ Signal:  <b>{sig}</b>\n"
             f"<pre>{grid}</pre>\n"
-            f"▸ This week:  low {fmt(r['low'])}  →  high {fmt(r['high'])}")
+            f"▸ This week:  low {fmt(r['low'])}  →  high {fmt(r['high'])}"
+            + (f"\n💼 Worth <b>${r['value']:,.2f}</b>  (paid ${r['cost']:,.2f})\n"
+               f"{'🟢' if r['pl'] >= 0 else '🔴'} P/L:  <b>{'+' if r['pl'] >= 0 else '-'}${abs(r['pl']):,.2f}  ({r['pl_pct']:+.1f}%)</b>"
+               if r.get("value") is not None else ""))
 
 
 _stocks = None
@@ -130,13 +133,21 @@ def today_label():
 
 
 def coins_section(rows):
-    return "💰 <b>Your coins</b>\n\n" + "\n\n".join(coin_block(r) for r in rows)
+    held = [r for r in rows if r.get("value") is not None]
+    top = ""
+    if held:
+        val = sum(r["value"] for r in held)
+        cost = sum(r["cost"] for r in held)
+        pl = val - cost
+        top = (f"💼 <b>Portfolio:  ${val:,.2f}</b>\n"
+               f"{'🟢' if pl >= 0 else '🔴'} Total P/L:  <b>{'+' if pl >= 0 else '-'}${abs(pl):,.2f}  ({pl / cost * 100:+.1f}%)</b>\n\n")
+    return top + "💰 <b>Your coins</b>\n\n" + "\n\n".join(coin_block(r) for r in rows)
 
 
 def help_text():
     return ("🤖 <b>What I do</b>\n"
             f"{LINE}\n"
-            f"🟢 Text you to <b>take profit</b> when a coin is {TP}% above its lowest price this week\n"
+            f"🟢 Text you to <b>take profit</b> when you're up {TP}% on what you paid\n"
             f"🔻 Text you to <b>rebuy</b> when a coin is {DIP}% below its highest price this week\n"
             "⚡ Warn you about big moves (15%+ in an hour)\n"
             "☀️ Send a morning brief every day\n\n"
@@ -150,8 +161,15 @@ def help_text():
 def alert(kind, r, c, tip):
     if kind == "sell":
         head = f"🟢 <b>TAKE PROFIT: {e(r['name'])}</b>"
-        why = f"📈 <b>{r['up']:.0f}%</b> above this week's low (your target: {TP}%)"
-        do = f"Sell about <b>{PORTION}%</b> of your bag"
+        if r["pl_pct"] is not None:
+            why = f"📈 You're up <b>{r['pl_pct']:.0f}%</b> (+${r['pl']:,.2f}) on what you paid (target: {TP}%)"
+            tokens = c["tokens"]
+            sell_t = min(tokens * PORTION / 100, max(0, tokens - c.get("keep_tokens", 0)))
+            do = (f"Sell about <b>{sell_t:,.0f} {e(r['name'])}</b> (≈ ${sell_t * r['price']:,.2f})"
+                  if sell_t > 0 else "Hold. You're at your minimum to keep")
+        else:
+            why = f"📈 <b>{r['up']:.0f}%</b> above this week's low (your target: {TP}%)"
+            do = f"Sell about <b>{PORTION}%</b> of your bag"
     else:
         head = f"🔻 <b>REBUY CHANCE: {e(r['name'])}</b>"
         why = f"📉 <b>{abs(r['down']):.0f}%</b> below this week's high (your dip: {DIP}%)"
@@ -213,9 +231,18 @@ def main():
              "changes": {"30m": ago(30), "1h": h1 if h1 is not None else ago(60), "3h": ago(180),
                          "6h": h6 if h6 is not None else ago(360), "12h": ago(720),
                          "24h": h24 if h24 is not None else ago(1440)}}
+        tokens, cost = c.get("tokens"), c.get("cost_usd")
+        if tokens and cost:
+            r["value"] = tokens * price
+            r["cost"] = cost
+            r["pl"] = r["value"] - cost
+            r["pl_pct"] = r["pl"] / cost * 100
+        else:
+            r["value"] = r["pl_pct"] = None
         rows.append(r)
 
-        zone = "sell" if r["up"] >= TP else "buy" if r["down"] <= -DIP else "none"
+        gain = r["pl_pct"] if r["pl_pct"] is not None else r["up"]
+        zone = "sell" if gain >= TP else "buy" if r["down"] <= -DIP else "none"
         if zone != st.get("zone", "none") and zone != "none":
             if zone == "sell":
                 tip = ("Momentum is slowing, good time to lock in profit." if r["h1"] < 0
