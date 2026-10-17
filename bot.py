@@ -12,7 +12,17 @@ try:
 except Exception:
     STATE = {}
 
-VERSION = 4
+# Your amounts live in the private HOLDINGS secret, not in the public coins.json
+try:
+    HOLD = json.loads(os.environ.get("HOLDINGS") or "{}")
+except Exception:
+    HOLD = {}
+for _c in CFG["coins"]:
+    _h = HOLD.get(_c["name"]) or {}
+    if _h.get("tokens") and _h.get("paid"):
+        _c["tokens"], _c["cost_usd"], _c["realized_usd"] = _h["tokens"], _h["paid"], _h.get("realized", 0) or 0
+
+VERSION = 5
 LINE = "━━━━━━━━━━━━━━"
 e = html.escape
 TP = CFG.get("take_profit_pct", 50)
@@ -101,7 +111,9 @@ def coin_block(r):
             f"<pre>{grid}</pre>\n"
             f"▸ This week:  low {fmt(r['low'])}  →  high {fmt(r['high'])}"
             + (f"\n💼 Worth <b>${r['value']:,.2f}</b>  (paid ${r['cost']:,.2f})\n"
-               f"{'🟢' if r['pl'] >= 0 else '🔴'} P/L:  <b>{'+' if r['pl'] >= 0 else '-'}${abs(r['pl']):,.2f}  ({r['pl_pct']:+.1f}%)</b>"
+               f"{'🟢' if r['pl'] >= 0 else '🔴'} Holding P/L:  <b>{sgn(r['pl'])}  ({r['pl_pct']:+.1f}%)</b>\n"
+               f"💵 Realized (sold):  {sgn(r['realized'])}\n"
+               f"{'🟢' if r['pl'] + r['realized'] >= 0 else '🔴'} All-in:  <b>{sgn(r['pl'] + r['realized'])}</b>"
                if r.get("value") is not None else ""))
 
 
@@ -132,6 +144,10 @@ def today_label():
     return datetime.datetime.now(ZoneInfo("America/Chicago")).strftime("%A, %b %-d")
 
 
+def sgn(v):
+    return f"{'+' if v >= 0 else '-'}${abs(v):,.2f}"
+
+
 def coins_section(rows):
     held = [r for r in rows if r.get("value") is not None]
     top = ""
@@ -139,8 +155,11 @@ def coins_section(rows):
         val = sum(r["value"] for r in held)
         cost = sum(r["cost"] for r in held)
         pl = val - cost
-        top = (f"💼 <b>Portfolio:  ${val:,.2f}</b>\n"
-               f"{'🟢' if pl >= 0 else '🔴'} Total P/L:  <b>{'+' if pl >= 0 else '-'}${abs(pl):,.2f}  ({pl / cost * 100:+.1f}%)</b>\n\n")
+        real = sum(r.get("realized", 0) for r in held)
+        top = (f"💼 <b>Portfolio:  ${val:,.2f}</b>  (paid ${cost:,.2f})\n"
+               f"{'🟢' if pl >= 0 else '🔴'} Holding P/L:  <b>{sgn(pl)}  ({pl / cost * 100:+.1f}%)</b>\n"
+               f"💵 Realized (sold):  {sgn(real)}\n"
+               f"{'🟢' if pl + real >= 0 else '🔴'} All-in:  <b>{sgn(pl + real)}</b>\n\n")
     return top + "💰 <b>Your coins</b>\n\n" + "\n\n".join(coin_block(r) for r in rows)
 
 
@@ -237,6 +256,7 @@ def main():
             r["cost"] = cost
             r["pl"] = r["value"] - cost
             r["pl_pct"] = r["pl"] / cost * 100
+            r["realized"] = c.get("realized_usd", 0)
         else:
             r["value"] = r["pl_pct"] = None
         rows.append(r)

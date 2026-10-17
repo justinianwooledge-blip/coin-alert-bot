@@ -3,23 +3,17 @@
     {
       "name": "MOO",
       "ca": "0xd9db30bb0d2b8d2eae3826a1372117e058791e18",
-      "note": "Paired with Micron (MU)",
-      "tokens": 113390,
-      "cost_usd": 382.92
+      "note": "Paired with Micron (MU)"
     },
     {
       "name": "ORBIO",
       "ca": "0xaa07a0e9209e16ac99708c3ec70159c6ef3128a3",
-      "note": "",
-      "tokens": 2346.32484,
-      "cost_usd": 100.61
+      "note": ""
     },
     {
       "name": "INDEX",
       "ca": "0x56910d4409f3a0c78c64dd8d0545ff0705389870",
       "note": "Keeping 10,000 for payouts",
-      "tokens": 10556.77564,
-      "cost_usd": 121.86,
       "keep_tokens": 10000
     }
   ],
