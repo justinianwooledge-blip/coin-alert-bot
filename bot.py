@@ -62,6 +62,26 @@ def coin_data(ca):
     return None
 
 
+def candles(pool, ca):
+    """15-minute price history from GeckoTerminal: [[close_time, close_price], ...] oldest first."""
+    base = "https://api.geckoterminal.com/api/v2/networks/robinhood/"
+    now = datetime.datetime.utcnow().timestamp()
+
+    def fetch(p):
+        j = json.loads(get(base + f"pools/{p}/ohlcv/minute?aggregate=15&limit=64"))
+        return sorted([min(c[0] + 900, now), float(c[4])] for c in j["data"]["attributes"]["ohlcv_list"])
+    try:
+        if pool:
+            return fetch(pool)
+    except Exception:
+        pass
+    try:
+        j = json.loads(get(base + f"tokens/{ca}/pools?page=1"))
+        return fetch(j["data"][0]["attributes"]["address"])
+    except Exception:
+        return []
+
+
 def stock_change(sym):
     try:
         meta = json.loads(get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"))["chart"]["result"][0]["meta"]
@@ -229,12 +249,28 @@ def main():
         hist.append([round(ts), price])
         st["hist"] = hist
 
+        cands = candles(d.get("pairAddress"), ca)
+
         def ago(minutes):
+            """% change since `minutes` ago. Uses real trades first, saved prices as backup."""
             target = ts - minutes * 60
-            best = min(hist[:-1], key=lambda h: abs(h[0] - target), default=None)
-            if not best or abs(best[0] - target) > max(600, minutes * 6):
-                return None
-            return (price / best[1] - 1) * 100
+            prior = [p for t, p in cands if t <= target]
+            if prior:
+                return (price / prior[-1] - 1) * 100
+            pts = hist[:-1]
+            target = ts - minutes * 60
+            if not pts or target < pts[0][0] - 300:
+                return None  # not enough history yet
+            then = None
+            for (t1, p1), (t2, p2) in zip(pts, pts[1:] + [hist[-1]]):
+                if t1 <= target <= t2:
+                    if t2 - t1 > max(5400, minutes * 45):
+                        return None
+                    then = p1 + (p2 - p1) * ((target - t1) / ((t2 - t1) or 1))
+                    break
+            if then is None and abs(pts[0][0] - target) <= 300:
+                then = pts[0][1]
+            return (price / then - 1) * 100 if then else None
 
         # Weekly low and high (reset after 7 days)
         for k, better in (("high", price > st.get("high", 0)), ("low", price < st.get("low", 1e18))):
