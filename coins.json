@@ -15,6 +15,11 @@
       "ca": "0x56910d4409f3a0c78c64dd8d0545ff0705389870",
       "note": "Keeping 10,000 for payouts",
       "keep_tokens": 10000
+    },
+    {
+      "name": "BUN",
+      "ca": "0x07ebb29a38fbcb41563817e5e19f2cec619c90d2",
+      "note": "Bundle Cat (Mosh token)"
     }
   ],
   "take_profit_pct": 50,
