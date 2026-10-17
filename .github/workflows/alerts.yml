@@ -15,6 +15,7 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          HOLDINGS: ${{ secrets.HOLDINGS }}
         run: python3 bot.py
       - name: Save state
         run: |
