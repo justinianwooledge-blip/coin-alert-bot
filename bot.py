@@ -1,6 +1,6 @@
 """Coin alert bot: checks your coins every 5 min and texts you on Telegram.
 Sends alerts and suggestions only. It never buys or sells anything."""
-import json, os, datetime, html, urllib.request, urllib.parse
+import json, os, re, datetime, html, urllib.request, urllib.parse, urllib.error
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 
@@ -44,7 +44,13 @@ def tg(method, **params):
 
 
 def send(text):
-    tg("sendMessage", chat_id=CHAT, text=text, parse_mode="HTML", disable_web_page_preview="true")
+    """Send with formatting; if Telegram rejects it, log why and resend as plain text."""
+    try:
+        tg("sendMessage", chat_id=CHAT, text=text, parse_mode="HTML", disable_web_page_preview="true")
+    except urllib.error.HTTPError as ex:
+        print("Telegram rejected formatted message:", ex.code, ex.read()[:300])
+        plain = html.unescape(re.sub(r"<[^>]+>", "", text))
+        tg("sendMessage", chat_id=CHAT, text=plain[:4000], disable_web_page_preview="true")
 
 
 def coin_data(ca):
@@ -320,12 +326,21 @@ def main():
     # Commands you send the bot
     try:
         res = tg("getUpdates", offset=STATE.get("tg_offset", 0), timeout=0)
-        for u in res.get("result", []):
-            STATE["tg_offset"] = u["update_id"] + 1
-            msg = u.get("message") or {}
-            if str((msg.get("chat") or {}).get("id")) != CHAT:
-                continue
-            text = (msg.get("text") or "").strip().lower()
+        ups = res.get("result", [])
+        print(f"Telegram: {len(ups)} new message(s)")
+    except Exception as ex:
+        print("Couldn't read Telegram messages:", ex)
+        ups = []
+    for u in ups:
+        STATE["tg_offset"] = u["update_id"] + 1
+        msg = u.get("message") or {}
+        chat_id = str((msg.get("chat") or {}).get("id"))
+        text = (msg.get("text") or "").strip().lower()
+        print(f"  message from chat {chat_id}: {text[:30]!r}")
+        if chat_id != CHAT:
+            print("  (skipped: not your chat ID)")
+            continue
+        try:
             if text.startswith("/status"):
                 send(f"📋 <b>Status check</b>\n<i>{today_label()}</i>\n{LINE}\n\n"
                      + coins_section(rows) + ("\n\n" + stocks_section() if stocks_section() else ""))
@@ -333,8 +348,8 @@ def main():
                 send(news_section())
             elif text.startswith("/help") or text.startswith("/start"):
                 send(help_text())
-    except Exception:
-        pass
+        except Exception as ex:
+            print("  reply failed:", ex)
 
     # New look: set up the menu and show the new layout once
     if STATE.get("version") != VERSION:
