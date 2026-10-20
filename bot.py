@@ -17,12 +17,71 @@ try:
     HOLD = json.loads(os.environ.get("HOLDINGS") or "{}")
 except Exception:
     HOLD = {}
-for _c in CFG["coins"]:
-    _h = HOLD.get(_c["name"]) or {}
-    if _h.get("tokens") and _h.get("paid"):
-        _c["tokens"], _c["cost_usd"], _c["realized_usd"] = _h["tokens"], _h["paid"], _h.get("realized", 0) or 0
+STABLES = {"CASH", "USDC", "USDT", "USDG", "DAI", "PYUSD", "USDE", "USDS", "FDUSD", "WETH", "ETH", "WBTC"}
 
-VERSION = 5
+
+def wallet_balances(addr):
+    """Token balances for a wallet on Robinhood Chain: {contract: (symbol, amount)}. Explorer first, RPC as backup."""
+    out = {}
+    try:
+        req = urllib.request.Request(f"https://robinhoodchain.blockscout.com/api/v2/addresses/{addr}/token-balances",
+                                     headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+        items = json.loads(urllib.request.urlopen(req, timeout=20).read())
+        items = items if isinstance(items, list) else items.get("items", [])
+        for it in items:
+            t = it.get("token") or {}
+            ca = (t.get("address_hash") or t.get("address") or "").lower()
+            if not ca or "20" not in (t.get("type") or "ERC-20"):
+                continue
+            out[ca] = ((t.get("symbol") or ca[:6]).upper(), int(it.get("value") or 0) / 10 ** int(t.get("decimals") or 18))
+        return out
+    except Exception as ex:
+        print("Explorer balance lookup failed, trying RPC:", ex)
+    rpc = "https://rpc.mainnet.chain.robinhood.com"
+    for c in CFG["coins"]:
+        try:
+            def call(data):
+                body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "eth_call",
+                                   "params": [{"to": c["ca"], "data": data}, "latest"]}).encode()
+                r = urllib.request.Request(rpc, body, {"Content-Type": "application/json"})
+                return json.loads(urllib.request.urlopen(r, timeout=20).read())["result"]
+            bal = int(call("0x70a08231" + addr[2:].lower().rjust(64, "0")), 16)
+            dec = int(call("0x313ce567"), 16)
+            out[c["ca"].lower()] = (c["name"], bal / 10 ** dec)
+        except Exception:
+            pass
+    return out
+
+
+# Coin amounts: read straight from your wallet when HOLDINGS has a "wallet" address; otherwise use the typed-in amounts
+WALLET = (HOLD.get("wallet") or "").strip()
+if WALLET.startswith("0x") and len(WALLET) == 42:
+    BAL = wallet_balances(WALLET)
+    if BAL:
+        known = {c["ca"].lower(): c for c in CFG["coins"]}
+        for ca, (sym, amt) in BAL.items():
+            if sym in STABLES or amt <= 0 or ca in known:
+                continue
+            CFG["coins"].append({"name": sym, "ca": ca, "note": "Found in your wallet"})
+        kept = []
+        for c in CFG["coins"]:
+            amt = BAL.get(c["ca"].lower(), (None, 0))[1]
+            if amt <= 0:
+                continue  # sold, so stop tracking it
+            h = HOLD.get(c["name"]) or {}
+            c["tokens"] = amt
+            if h.get("paid"):
+                c["cost_usd"], c["realized_usd"] = h["paid"], h.get("realized", 0) or 0
+            kept.append(c)
+        CFG["coins"] = kept
+        print(f"Wallet synced: {len(kept)} coins")
+else:
+    for _c in CFG["coins"]:
+        _h = HOLD.get(_c["name"]) or {}
+        if _h.get("tokens") and _h.get("paid"):
+            _c["tokens"], _c["cost_usd"], _c["realized_usd"] = _h["tokens"], _h["paid"], _h.get("realized", 0) or 0
+
+VERSION = 6
 LINE = "━━━━━━━━━━━━━━"
 e = html.escape
 TP = CFG.get("take_profit_pct", 50)
@@ -140,7 +199,8 @@ def coin_block(r):
                f"{'🟢' if r['pl'] >= 0 else '🔴'} Holding P/L:  <b>{sgn(r['pl'])}  ({r['pl_pct']:+.1f}%)</b>\n"
                f"💵 Realized (sold):  {sgn(r['realized'])}\n"
                f"{'🟢' if r['pl'] + r['realized'] >= 0 else '🔴'} All-in:  <b>{sgn(r['pl'] + r['realized'])}</b>"
-               if r.get("value") is not None else ""))
+               if r.get("value") is not None else
+               (f"\n💼 Worth <b>${r['worth']:,.2f}</b>" if r.get("worth") else "")))
 
 
 _stocks = None
@@ -301,6 +361,7 @@ def main():
             r["realized"] = c.get("realized_usd", 0)
         else:
             r["value"] = r["pl_pct"] = None
+            r["worth"] = tokens * price if tokens else None   # amount from wallet, no paid amount yet
         rows.append(r)
 
         gain = r["pl_pct"] if r["pl_pct"] is not None else r["up"]
