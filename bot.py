@@ -303,6 +303,10 @@ def main():
         name, ca = c["name"], c.get("ca", "")
         d = coin_data(ca) if ca else None
         price = float((d or {}).get("priceUsd") or 0)
+        if c.get("note") == "Found in your wallet" and (not d or ((d.get("liquidity") or {}).get("usd") or 0) < 5000):
+            continue  # junk airdrop: no real market behind it, so leave it out
+        if WALLET and c.get("tokens") is not None and (c.get("tokens") or 0) * price < 5:
+            continue  # worth under $5, so leave it off the list
         if not d or price <= 0:
             rows.append({"name": name, "missing": True})
             continue
